@@ -1,10 +1,8 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 import subprocess
-import socket
 import threading
 import time
-import netifaces
 import re
 from datetime import datetime
 import ipaddress
@@ -12,21 +10,17 @@ import ipaddress
 class NetworkScanner:
     def __init__(self, root):
         self.root = root
-        self.root.title("Advanced Network Scanner")
+        self.root.title("Network Scanner")
         self.root.geometry("1000x800")
         self.root.resizable(True, True)
         
         # Scan variables
         self.scanning = False
         self.scan_thread = None
-        self.network_info = {}
         self.devices = []
         
         # Create GUI elements
         self.create_widgets()
-        
-        # Get network info initially
-        self.update_network_info()
     
     def create_widgets(self):
         # Main frame
@@ -34,23 +28,21 @@ class NetworkScanner:
         main_frame.pack(fill=tk.BOTH, expand=True)
         
         # Title
-        title_label = ttk.Label(main_frame, text="Advanced Network Scanner", font=('Helvetica', 16, 'bold'))
+        title_label = ttk.Label(main_frame, text="Network Scanner", font=('Helvetica', 16, 'bold'))
         title_label.pack(pady=10)
         
-        # Network selection frame
-        network_frame = ttk.LabelFrame(main_frame, text="Network Selection", padding="10")
-        network_frame.pack(fill=tk.X, pady=5)
+        # Network input frame
+        input_frame = ttk.LabelFrame(main_frame, text="Network to Scan", padding="10")
+        input_frame.pack(fill=tk.X, pady=5)
         
-        # Interface dropdown
-        ttk.Label(network_frame, text="Network Interface:").pack(side=tk.LEFT, padx=5)
-        self.interface_var = tk.StringVar()
-        self.interface_dropdown = ttk.Combobox(network_frame, textvariable=self.interface_var, state='readonly')
-        self.interface_dropdown.pack(side=tk.LEFT, padx=5)
-        self.interface_dropdown.bind('<<ComboboxSelected>>', self.interface_selected)
+        # Network address input
+        ttk.Label(input_frame, text="Network Address (e.g., 192.168.1.0/24):").pack(side=tk.LEFT, padx=5)
+        self.network_var = tk.StringVar()
+        self.network_entry = ttk.Entry(input_frame, textvariable=self.network_var, width=20)
+        self.network_entry.pack(side=tk.LEFT, padx=5)
         
-        # Network info display
-        self.network_info_label = ttk.Label(network_frame, text="Select a network interface", font=('Helvetica', 10))
-        self.network_info_label.pack(side=tk.LEFT, padx=10)
+        # Example label
+        ttk.Label(input_frame, text="Example: 192.168.1.0/24", font=('Helvetica', 9)).pack(side=tk.LEFT, padx=5)
         
         # Control frame
         control_frame = ttk.Frame(main_frame, padding="10")
@@ -108,65 +100,18 @@ class NetworkScanner:
         self.details_text = scrolledtext.ScrolledText(details_frame, wrap=tk.WORD, height=10)
         self.details_text.pack(fill=tk.BOTH, expand=True)
         self.details_text.config(state=tk.DISABLED)
-    
-    def update_network_info(self):
-        """Get and display network interface information"""
-        try:
-            self.network_info = self.get_network_interfaces()
-            interfaces = list(self.network_info.keys())
-            
-            if not interfaces:
-                messagebox.showwarning("Warning", "No active network interfaces found")
-                return
-            
-            self.interface_dropdown['values'] = interfaces
-            self.interface_dropdown.current(0)
-            self.interface_selected()
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to get network info: {str(e)}")
-    
-    def interface_selected(self, event=None):
-        """Update display when interface is selected"""
-        interface = self.interface_var.get()
-        if interface in self.network_info:
-            info = self.network_info[interface]
-            text = (f"Interface: {interface}\n"
-                   f"IP: {info.get('ip', 'N/A')}\n"
-                   f"Netmask: {info.get('netmask', 'N/A')}\n"
-                   f"Network: {info.get('network', 'N/A')}")
-            self.network_info_label.config(text=text)
-    
-    def get_network_interfaces(self):
-        """Get all network interfaces with IP addresses and calculate network ranges"""
-        interfaces = {}
-        for interface in netifaces.interfaces():
-            if interface == 'lo':
-                continue  # Skip loopback
-            
-            addrs = netifaces.ifaddresses(interface)
-            if netifaces.AF_INET in addrs:
-                ip_info = addrs[netifaces.AF_INET][0]
-                ip = ip_info.get('addr', '')
-                netmask = ip_info.get('netmask', '')
-                
-                if ip and netmask:
-                    try:
-                        # Calculate network using ipaddress module
-                        network = ipaddress.IPv4Network(f"{ip}/{netmask}", strict=False)
-                        network_str = str(network)
-                    except:
-                        network_str = 'N/A'
-                else:
-                    network_str = 'N/A'
-                
-                interfaces[interface] = {
-                    'ip': ip,
-                    'netmask': netmask,
-                    'network': network_str,
-                    'network_obj': network if 'network' in locals() else None
-                }
         
-        return interfaces
+        # Set focus to network entry
+        self.network_entry.focus()
+    
+    def validate_network(self, network_str):
+        """Validate the network address input"""
+        try:
+            network = ipaddress.IPv4Network(network_str, strict=False)
+            return network
+        except ValueError:
+            messagebox.showerror("Invalid Input", "Please enter a valid network address with CIDR notation\nExample: 192.168.1.0/24")
+            return None
     
     def toggle_scan(self):
         """Start or stop scanning"""
@@ -177,14 +122,13 @@ class NetworkScanner:
     
     def start_scan(self):
         """Start network scan"""
-        interface = self.interface_var.get()
-        if not interface or interface not in self.network_info:
-            messagebox.showerror("Error", "No network interface selected")
+        network_str = self.network_var.get().strip()
+        if not network_str:
+            messagebox.showerror("Error", "Please enter a network address to scan")
             return
         
-        network_info = self.network_info[interface]
-        if not network_info.get('network'):
-            messagebox.showerror("Error", "Could not determine network to scan")
+        network = self.validate_network(network_str)
+        if not network:
             return
         
         self.scanning = True
@@ -199,7 +143,7 @@ class NetworkScanner:
         # Start scan in separate thread
         self.scan_thread = threading.Thread(
             target=self.run_nmap_scan,
-            args=(network_info['network'], scan_type),
+            args=(str(network), scan_type),
             daemon=True
         )
         self.scan_thread.start()
