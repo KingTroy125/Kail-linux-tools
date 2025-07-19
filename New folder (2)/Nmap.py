@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, messagebox, scrolledtext
+from tkinter import ttk, messagebox, scrolledtext, simpledialog
 import subprocess
 import threading
 from datetime import datetime
@@ -8,13 +8,14 @@ import ipaddress
 class PingScanner:
     def __init__(self, root):
         self.root = root
-        self.root.title("Simple Ping Scanner")
+        self.root.title("Nmap Ping Scanner")
         self.root.geometry("800x600")
         self.root.resizable(True, True)
         
         # Scan variables
         self.scanning = False
         self.scan_thread = None
+        self.sudo_password = None
         
         # Create GUI elements
         self.create_widgets()
@@ -25,7 +26,7 @@ class PingScanner:
         main_frame.pack(fill=tk.BOTH, expand=True)
         
         # Title
-        title_label = ttk.Label(main_frame, text="Simple Ping Scanner", font=('Helvetica', 16, 'bold'))
+        title_label = ttk.Label(main_frame, text="Nmap Ping Scanner", font=('Helvetica', 16, 'bold'))
         title_label.pack(pady=10)
         
         # Target input frame
@@ -53,7 +54,7 @@ class PingScanner:
         control_frame.pack(fill=tk.X, pady=5)
         
         # Scan button
-        self.scan_button = ttk.Button(control_frame, text="Start Scan", command=self.toggle_scan)
+        self.scan_button = ttk.Button(control_frame, text="Start Scan", command=self.start_scan_wrapper)
         self.scan_button.pack(side=tk.LEFT, padx=5)
         
         # Status label
@@ -69,6 +70,20 @@ class PingScanner:
         self.results_text.pack(fill=tk.BOTH, expand=True)
         self.results_text.config(state=tk.DISABLED)
     
+    def start_scan_wrapper(self):
+        """Wrapper to get sudo password before starting scan"""
+        if self.scanning:
+            self.stop_scan()
+            return
+        
+        self.sudo_password = simpledialog.askstring("Sudo Password", 
+                                                  "Enter your sudo password:", 
+                                                  show='*')
+        if self.sudo_password is None:  # User cancelled
+            return
+        
+        self.start_scan()
+    
     def validate_target(self, target_str):
         """Validate the network address input"""
         try:
@@ -77,13 +92,6 @@ class PingScanner:
         except ValueError:
             messagebox.showerror("Invalid Input", "Please enter a valid network in CIDR notation\nExample: 192.168.1.0/24")
             return None
-    
-    def toggle_scan(self):
-        """Start or stop scanning"""
-        if self.scanning:
-            self.stop_scan()
-        else:
-            self.start_scan()
     
     def start_scan(self):
         """Start network scan"""
@@ -105,21 +113,26 @@ class PingScanner:
         self.scan_thread.start()
     
     def run_scan(self, target):
-        """Run the nmap ping scan"""
+        """Run the nmap ping scan with sudo"""
         try:
             scan_type = self.scan_type.get()
-            command = ['sudo', 'nmap', f'-{scan_type}', target]
+            command = ['sudo', '-S', 'nmap', f'-{scan_type}', target]
             
-            self.append_output(f"Starting: {' '.join(command)}\n")
+            self.append_output(f"Running command: {' '.join(command)}\n")
             self.append_output(f"Scan started at {datetime.now().strftime('%H:%M:%S')}\n")
             self.append_output("-" * 50 + "\n")
             
             process = subprocess.Popen(
                 command,
+                stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True
             )
+            
+            # Send sudo password
+            process.stdin.write(self.sudo_password + "\n")
+            process.stdin.flush()
             
             # Read output in real-time
             while True:
@@ -151,6 +164,7 @@ class PingScanner:
             if self.scanning:
                 self.scanning = False
                 self.scan_button.config(text="Start Scan")
+                self.sudo_password = None  # Clear password after use
     
     def stop_scan(self):
         """Stop ongoing scan"""
