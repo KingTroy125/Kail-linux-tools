@@ -6,17 +6,17 @@ import re
 from datetime import datetime
 import ipaddress
 
-class NetworkScanner:
+class NmapScanner:
     def __init__(self, root):
         self.root = root
-        self.root.title("IP Address Scanner")
-        self.root.geometry("900x700")
+        self.root.title("Nmap Scanner")
+        self.root.geometry("1000x800")
         self.root.resizable(True, True)
         
         # Scan variables
         self.scanning = False
         self.scan_thread = None
-        self.devices = []
+        self.results = []
         
         # Create GUI elements
         self.create_widgets()
@@ -27,25 +27,53 @@ class NetworkScanner:
         main_frame.pack(fill=tk.BOTH, expand=True)
         
         # Title
-        title_label = ttk.Label(main_frame, text="IP Address Scanner", font=('Helvetica', 16, 'bold'))
+        title_label = ttk.Label(main_frame, text="Nmap Scanner", font=('Helvetica', 16, 'bold'))
         title_label.pack(pady=10)
         
-        # Input frame
+        # Target input frame
         input_frame = ttk.LabelFrame(main_frame, text="Scan Target", padding="10")
         input_frame.pack(fill=tk.X, pady=5)
         
-        # Target input
-        ttk.Label(input_frame, text="Enter IP or Range:").pack(side=tk.LEFT, padx=5)
+        # Target entry
+        ttk.Label(input_frame, text="IP/Range:").pack(side=tk.LEFT, padx=5)
         self.target_var = tk.StringVar()
         self.target_entry = ttk.Entry(input_frame, textvariable=self.target_var, width=25)
         self.target_entry.pack(side=tk.LEFT, padx=5)
-        self.target_entry.insert(0, "192.168.1.1")  # Default value
+        self.target_entry.insert(0, "192.168.1.1")
         
         # Examples
-        examples = ttk.Label(input_frame, 
-                           text="Examples: 192.168.1.1, 192.168.1.1-100, 192.168.1.0/24",
-                           font=('Helvetica', 9))
-        examples.pack(side=tk.LEFT, padx=5)
+        ttk.Label(input_frame, 
+                 text="Examples: 192.168.1.1, 192.168.1.1-100, 192.168.1.0/24",
+                 font=('Helvetica', 9)).pack(side=tk.LEFT, padx=5)
+        
+        # Scan type selection
+        scan_frame = ttk.LabelFrame(main_frame, text="Scan Type", padding="10")
+        scan_frame.pack(fill=tk.X, pady=5)
+        
+        self.scan_type = tk.StringVar(value='sn')
+        
+        # Scan type buttons
+        types = [
+            ('Ping Scan (-sn)', 'sn'),
+            ('Quick Scan (-T4 -F)', 'quick'),
+            ('Full Scan (-A)', 'full'),
+            ('Port Range (-p 1-1000)', 'ports'),
+            ('OS Detection (-O)', 'os'),
+            ('Service Detection (-sV)', 'service')
+        ]
+        
+        for i, (text, mode) in enumerate(types):
+            btn = ttk.Radiobutton(scan_frame, text=text, variable=self.scan_type, value=mode)
+            btn.grid(row=i//3, column=i%3, sticky='w', padx=5, pady=2)
+        
+        # Custom scan frame
+        custom_frame = ttk.Frame(scan_frame)
+        custom_frame.grid(row=2, column=2, columnspan=1, sticky='ew')
+        ttk.Label(custom_frame, text="Custom:").pack(side=tk.LEFT)
+        self.custom_scan_var = tk.StringVar()
+        self.custom_scan_entry = ttk.Entry(custom_frame, textvariable=self.custom_scan_var, width=15)
+        self.custom_scan_entry.pack(side=tk.LEFT, padx=5)
+        self.custom_scan_entry.insert(0, "-sS -p 22,80,443")
         
         # Control frame
         control_frame = ttk.Frame(main_frame, padding="10")
@@ -54,12 +82,6 @@ class NetworkScanner:
         # Scan button
         self.scan_button = ttk.Button(control_frame, text="Start Scan", command=self.toggle_scan)
         self.scan_button.pack(side=tk.LEFT, padx=5)
-        
-        # Scan options
-        ttk.Label(control_frame, text="Scan Type:").pack(side=tk.LEFT, padx=5)
-        self.scan_type_var = tk.StringVar(value='quick')
-        ttk.Radiobutton(control_frame, text="Quick", variable=self.scan_type_var, value='quick').pack(side=tk.LEFT)
-        ttk.Radiobutton(control_frame, text="Detailed", variable=self.scan_type_var, value='detailed').pack(side=tk.LEFT, padx=5)
         
         # Progress bar
         self.progress = ttk.Progressbar(control_frame, orient=tk.HORIZONTAL, mode='indeterminate')
@@ -75,20 +97,22 @@ class NetworkScanner:
         
         # Treeview for results
         self.results_tree = ttk.Treeview(results_frame, 
-                                       columns=('ip', 'status', 'hostname', 'mac', 'ports'), 
+                                       columns=('ip', 'status', 'hostname', 'ports', 'os', 'service'), 
                                        show='headings')
-        self.results_tree.heading('ip', text='IP Address')
-        self.results_tree.heading('status', text='Status')
-        self.results_tree.heading('hostname', text='Hostname')
-        self.results_tree.heading('mac', text='MAC Address')
-        self.results_tree.heading('ports', text='Open Ports')
         
-        # Set column widths
-        self.results_tree.column('ip', width=120, anchor=tk.W)
-        self.results_tree.column('status', width=80, anchor=tk.W)
-        self.results_tree.column('hostname', width=150, anchor=tk.W)
-        self.results_tree.column('mac', width=120, anchor=tk.W)
-        self.results_tree.column('ports', width=200, anchor=tk.W)
+        # Configure columns
+        columns = [
+            ('ip', 'IP Address', 120),
+            ('status', 'Status', 80),
+            ('hostname', 'Hostname', 150),
+            ('ports', 'Open Ports', 200),
+            ('os', 'OS Guess', 150),
+            ('service', 'Services', 200)
+        ]
+        
+        for col_id, col_text, width in columns:
+            self.results_tree.heading(col_id, text=col_text)
+            self.results_tree.column(col_id, width=width, anchor=tk.W)
         
         # Add scrollbar
         scrollbar = ttk.Scrollbar(results_frame, orient=tk.VERTICAL, command=self.results_tree.yview)
@@ -103,9 +127,6 @@ class NetworkScanner:
         self.details_text = scrolledtext.ScrolledText(details_frame, wrap=tk.WORD, height=10)
         self.details_text.pack(fill=tk.BOTH, expand=True)
         self.details_text.config(state=tk.DISABLED)
-        
-        # Set focus to target entry
-        self.target_entry.focus()
     
     def validate_target(self, target_str):
         """Validate the target IP or range"""
@@ -145,6 +166,28 @@ class NetworkScanner:
                            " - CIDR Range: 192.168.1.0/24")
         return None
     
+    def get_scan_command(self, target):
+        """Return the appropriate nmap command based on selected scan type"""
+        scan_type = self.scan_type.get()
+        
+        base_cmd = ['sudo', 'nmap', '-oX', '-', '-n', target]
+        
+        if scan_type == 'sn':
+            return base_cmd + ['-sn']
+        elif scan_type == 'quick':
+            return base_cmd + ['-T4', '-F']
+        elif scan_type == 'full':
+            return base_cmd + ['-A', '-v']
+        elif scan_type == 'ports':
+            return base_cmd + ['-p', '1-1000']
+        elif scan_type == 'os':
+            return base_cmd + ['-O']
+        elif scan_type == 'service':
+            return base_cmd + ['-sV']
+        else:  # custom
+            custom = self.custom_scan_var.get().strip()
+            return base_cmd + custom.split()
+    
     def toggle_scan(self):
         """Start or stop scanning"""
         if self.scanning:
@@ -165,43 +208,21 @@ class NetworkScanner:
         self.status_label.config(text=f"Scanning {target}...")
         self.clear_results()
         
-        # Determine scan type
-        scan_type = self.scan_type_var.get()
-        
         # Start scan in separate thread
         self.scan_thread = threading.Thread(
             target=self.run_scan,
-            args=(target, scan_type),
+            args=(target,),
             daemon=True
         )
         self.scan_thread.start()
     
-    def stop_scan(self):
-        """Stop ongoing scan"""
-        self.scanning = False
-        self.scan_button.config(text="Start Scan")
-        self.progress.stop()
-        self.status_label.config(text="Scan stopped")
-        
-        if self.scan_thread and self.scan_thread.is_alive():
-            self.append_details("\n[Scan stopped by user]\n")
-    
-    def run_scan(self, target, scan_type):
-        """Run the nmap scan with appropriate parameters"""
+    def run_scan(self, target):
+        """Run the nmap scan with selected options"""
         try:
+            command = self.get_scan_command(target)
+            scan_type = self.scan_type.get()
+            
             self.append_details(f"Starting {scan_type} scan of {target} at {datetime.now().strftime('%H:%M:%S')}\n")
-            
-            # Base command
-            command = ['sudo', 'nmap', '-oX', '-', '-n']
-            
-            # Add scan type specific options
-            if scan_type == 'quick':
-                command.extend(['-sn', '-PE', '-PS22,80,443'])
-            else:  # detailed scan
-                command.extend(['-T4', '-A', '-v'])
-            
-            command.append(target)
-            
             self.append_details("Command: " + ' '.join(command) + "\n")
             
             result = subprocess.run(
@@ -212,9 +233,9 @@ class NetworkScanner:
             )
             
             if self.scanning:  # Only process if scan wasn't stopped
-                self.parse_scan_output(result.stdout, scan_type)
+                self.parse_results(result.stdout, scan_type)
                 self.append_details(f"\nScan completed at {datetime.now().strftime('%H:%M:%S')}\n")
-                self.status_label.config(text=f"Scan completed - {len(self.devices)} hosts found")
+                self.status_label.config(text=f"Scan completed - {len(self.results)} hosts found")
             
         except subprocess.CalledProcessError as e:
             self.append_details(f"Error running nmap:\n{e.stderr}\n")
@@ -228,131 +249,88 @@ class NetworkScanner:
                 self.scan_button.config(text="Start Scan")
                 self.progress.stop()
     
-    def parse_scan_output(self, xml_output, scan_type):
+    def parse_results(self, xml_output, scan_type):
         """Parse nmap XML output based on scan type"""
         try:
-            if scan_type == 'quick':
-                self.parse_ping_scan(xml_output)
-            else:
-                self.parse_detailed_scan(xml_output)
+            hosts = re.findall(r'<host .*?>.*?</host>', xml_output, re.DOTALL)
+            self.append_details(f"\nFound {len(hosts)} hosts\n")
+            
+            for host in hosts:
+                # Get common fields
+                ip = self.get_xml_field(host, r'<address addr="([^"]+)" addrtype="ipv4"/>')
+                status = self.get_xml_field(host, r'<status state="([^"]+)"', 'status').capitalize()
+                
+                # Skip if host is down (unless it's a ping scan)
+                if status.lower() != 'up' and scan_type != 'sn':
+                    continue
+                
+                # Get additional fields
+                hostname = self.get_xml_field(host, r'<hostname name="([^"]+)"')
+                mac = self.get_xml_field(host, r'<address addr="([^"]+)" addrtype="mac"/>')
+                vendor = self.get_xml_field(host, r'vendor="([^"]+)"')
+                os = self.get_xml_field(host, r'<osclass type="([^"]+)"')
+                
+                # Get ports and services
+                ports = []
+                port_matches = re.finditer(
+                    r'<port protocol="[^"]+" portid="([^"]+)">.*?<state state="([^"]+)".*?<service name="([^"]+)"', 
+                    host, re.DOTALL)
+                
+                for match in port_matches:
+                    if match.group(2) == 'open':
+                        ports.append(f"{match.group(1)}/{match.group(3)}")
+                
+                ports_str = ', '.join(ports) if ports else 'None'
+                
+                # Add to results
+                self.results.append({
+                    'ip': ip,
+                    'status': status,
+                    'hostname': hostname,
+                    'ports': ports_str,
+                    'os': os,
+                    'service': vendor
+                })
+                
+                # Add to treeview
+                self.results_tree.insert('', tk.END, values=(
+                    ip, status, hostname, ports_str, os, vendor
+                ))
+                
+                # Add to details
+                self.append_details(
+                    f"Host: {ip} ({hostname})\n"
+                    f"Status: {status}\n"
+                    f"MAC: {mac} ({vendor})\n"
+                    f"OS: {os}\n"
+                    f"Open Ports: {ports_str}\n\n"
+                )
+                
+                # Update GUI periodically
+                if len(self.results) % 5 == 0:
+                    self.root.update()
+        
         except Exception as e:
-            self.append_details(f"Error parsing output: {str(e)}\n")
+            self.append_details(f"Error parsing results: {str(e)}\n")
     
-    def parse_ping_scan(self, xml_output):
-        """Parse ping scan (-sn) results"""
-        hosts = re.findall(r'<host .*?>.*?</host>', xml_output, re.DOTALL)
-        self.append_details(f"\nFound {len(hosts)} active hosts\n")
-        
-        for host in hosts:
-            # Get IP address
-            ip_match = re.search(r'<address addr="([^"]+)" addrtype="ipv4"/>', host)
-            ip = ip_match.group(1) if ip_match else 'Unknown'
-            
-            # Get status
-            status = 'Up'
-            
-            # Get MAC address and vendor
-            mac_match = re.search(r'<address addr="([^"]+)" addrtype="mac"(?: vendor="([^"]+)")?', host)
-            if mac_match:
-                mac = mac_match.group(1)
-                vendor = mac_match.group(2) if mac_match.group(2) else 'Unknown'
-            else:
-                mac = 'Unknown'
-                vendor = 'Unknown'
-            
-            # Get hostname
-            hostname_match = re.search(r'<hostname name="([^"]+)"', host)
-            hostname = hostname_match.group(1) if hostname_match else 'Unknown'
-            
-            # Add to results
-            self.devices.append({
-                'ip': ip,
-                'status': status,
-                'hostname': hostname,
-                'mac': mac,
-                'vendor': vendor,
-                'ports': 'N/A (ping scan)'
-            })
-            
-            self.results_tree.insert('', tk.END, values=(
-                ip, status, hostname, mac, 'N/A (ping scan)'
-            ))
-            
-            self.append_details(
-                f"Host: {ip} ({hostname})\n"
-                f"  Status: {status}\n"
-                f"  MAC: {mac} ({vendor})\n\n"
-            )
-            
-            if len(self.devices) % 5 == 0:
-                self.root.update()
+    def get_xml_field(self, text, pattern, default='Unknown'):
+        """Helper to extract field from XML"""
+        match = re.search(pattern, text)
+        return match.group(1) if match else default
     
-    def parse_detailed_scan(self, xml_output):
-        """Parse detailed scan results"""
-        hosts = re.findall(r'<host .*?>.*?</host>', xml_output, re.DOTALL)
-        self.append_details(f"\nFound {len(hosts)} hosts\n")
+    def stop_scan(self):
+        """Stop ongoing scan"""
+        self.scanning = False
+        self.scan_button.config(text="Start Scan")
+        self.progress.stop()
+        self.status_label.config(text="Scan stopped")
         
-        for host in hosts:
-            # Get IP address
-            ip_match = re.search(r'<address addr="([^"]+)" addrtype="ipv4"/>', host)
-            ip = ip_match.group(1) if ip_match else 'Unknown'
-            
-            # Get status
-            status_match = re.search(r'<status state="([^"]+)"', host)
-            status = status_match.group(1).capitalize() if status_match else 'Unknown'
-            
-            # Skip if host is down
-            if status.lower() != 'up':
-                continue
-            
-            # Get MAC address and vendor
-            mac_match = re.search(r'<address addr="([^"]+)" addrtype="mac"(?: vendor="([^"]+)")?', host)
-            if mac_match:
-                mac = mac_match.group(1)
-                vendor = mac_match.group(2) if mac_match.group(2) else 'Unknown'
-            else:
-                mac = 'Unknown'
-                vendor = 'Unknown'
-            
-            # Get hostname
-            hostname_match = re.search(r'<hostname name="([^"]+)"', host)
-            hostname = hostname_match.group(1) if hostname_match else 'Unknown'
-            
-            # Get open ports
-            ports = []
-            port_matches = re.finditer(r'<port protocol="[^"]+" portid="([^"]+)">.*?<state state="([^"]+)".*?<service name="([^"]+)"', host, re.DOTALL)
-            for match in port_matches:
-                if match.group(2) == 'open':
-                    ports.append(f"{match.group(1)}/{match.group(3)}")
-            ports_str = ', '.join(ports) if ports else 'None'
-            
-            # Add to results
-            self.devices.append({
-                'ip': ip,
-                'status': status,
-                'hostname': hostname,
-                'mac': mac,
-                'vendor': vendor,
-                'ports': ports_str
-            })
-            
-            self.results_tree.insert('', tk.END, values=(
-                ip, status, hostname, mac, ports_str
-            ))
-            
-            self.append_details(
-                f"Host: {ip} ({hostname})\n"
-                f"  Status: {status}\n"
-                f"  MAC: {mac} ({vendor})\n"
-                f"  Open Ports: {ports_str}\n\n"
-            )
-            
-            if len(self.devices) % 5 == 0:
-                self.root.update()
+        if self.scan_thread and self.scan_thread.is_alive():
+            self.append_details("\n[Scan stopped by user]\n")
     
     def clear_results(self):
         """Clear previous scan results"""
-        self.devices = []
+        self.results = []
         for item in self.results_tree.get_children():
             self.results_tree.delete(item)
         
@@ -375,6 +353,6 @@ class NetworkScanner:
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = NetworkScanner(root)
+    app = NmapScanner(root)
     root.protocol("WM_DELETE_WINDOW", app.on_closing)
     root.mainloop()
