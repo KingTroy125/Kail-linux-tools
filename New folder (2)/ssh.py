@@ -4,6 +4,7 @@ import subprocess
 import socket
 import threading
 import time
+import netifaces
 
 class SSHManager:
     def __init__(self, root):
@@ -46,7 +47,7 @@ class SSHManager:
         ip_frame = ttk.LabelFrame(main_frame, text="Server Information", padding="10")
         ip_frame.pack(fill=tk.X, pady=5)
         
-        self.ip_label = ttk.Label(ip_frame, text=self.get_ip_address())
+        self.ip_label = ttk.Label(ip_frame, text=self.get_network_info())
         self.ip_label.pack()
         
         # Control buttons
@@ -75,13 +76,26 @@ class SSHManager:
         refresh_button = ttk.Button(main_frame, text="Refresh", command=self.refresh_devices)
         refresh_button.pack(pady=5)
     
-    def get_ip_address(self):
+    def get_network_info(self):
         try:
             hostname = socket.gethostname()
-            ip_address = socket.gethostbyname(hostname)
-            return f"Hostname: {hostname}\nIP Address: {ip_address}"
-        except:
-            return "Unable to get IP address"
+            interfaces = netifaces.interfaces()
+            ip_addresses = []
+            
+            for interface in interfaces:
+                if interface == 'lo':
+                    continue  # Skip loopback
+                addrs = netifaces.ifaddresses(interface)
+                if netifaces.AF_INET in addrs:
+                    for addr_info in addrs[netifaces.AF_INET]:
+                        ip_addresses.append(addr_info['addr'])
+            
+            if not ip_addresses:
+                return f"Hostname: {hostname}\nIP Address: Not connected to network"
+            
+            return f"Hostname: {hostname}\nIP Address(es): {', '.join(ip_addresses)}"
+        except Exception as e:
+            return f"Error getting network info: {str(e)}"
     
     def check_ssh_status(self):
         try:
