@@ -2,7 +2,6 @@ import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 import subprocess
 import threading
-import re
 from datetime import datetime
 import ipaddress
 
@@ -80,39 +79,13 @@ class PingScanner:
         self.status_label.pack(side=tk.LEFT, padx=10)
         
         # Results frame
-        results_frame = ttk.LabelFrame(main_frame, text="Discovered Hosts", padding="10")
+        results_frame = ttk.LabelFrame(main_frame, text="Scan Results", padding="10")
         results_frame.pack(fill=tk.BOTH, expand=True, pady=5)
         
-        # Treeview for results
-        self.results_tree = ttk.Treeview(results_frame, 
-                                       columns=('ip', 'hostname', 'mac', 'vendor'), 
-                                       show='headings')
-        
-        # Configure columns
-        columns = [
-            ('ip', 'IP Address', 150),
-            ('hostname', 'Hostname', 200),
-            ('mac', 'MAC Address', 150),
-            ('vendor', 'Vendor', 250)
-        ]
-        
-        for col_id, col_text, width in columns:
-            self.results_tree.heading(col_id, text=col_text)
-            self.results_tree.column(col_id, width=width, anchor=tk.W)
-        
-        # Add scrollbar
-        scrollbar = ttk.Scrollbar(results_frame, orient=tk.VERTICAL, command=self.results_tree.yview)
-        self.results_tree.configure(yscroll=scrollbar.set)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.results_tree.pack(fill=tk.BOTH, expand=True)
-        
-        # Details frame
-        details_frame = ttk.LabelFrame(main_frame, text="Scan Details", padding="10")
-        details_frame.pack(fill=tk.BOTH, pady=5)
-        
-        self.details_text = scrolledtext.ScrolledText(details_frame, wrap=tk.WORD, height=10)
-        self.details_text.pack(fill=tk.BOTH, expand=True)
-        self.details_text.config(state=tk.DISABLED)
+        # Text widget for raw output
+        self.results_text = scrolledtext.ScrolledText(results_frame, wrap=tk.WORD)
+        self.results_text.pack(fill=tk.BOTH, expand=True)
+        self.results_text.config(state=tk.DISABLED)
     
     def validate_target(self, target_str):
         """Validate the target IP or range"""
@@ -184,28 +157,42 @@ class PingScanner:
         """Run the ping scan with selected options"""
         try:
             scan_type = self.scan_type.get()
-            self.append_details(f"Starting {scan_type} scan of {target} at {datetime.now().strftime('%H:%M:%S')}\n")
+            self.append_output(f"Starting {scan_type} scan of {target} at {datetime.now().strftime('%H:%M:%S')}\n")
             
-            command = ['sudo', 'nmap', '-oX', '-', '-n', f'-{scan_type}', target]
-            self.append_details("Command: " + ' '.join(command) + "\n")
+            command = ['sudo', 'nmap', f'-{scan_type}', target]
+            self.append_output("Command: " + ' '.join(command) + "\n\n")
             
-            result = subprocess.run(
+            process = subprocess.Popen(
                 command,
-                capture_output=True,
-                text=True,
-                check=True
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
             )
             
-            if self.scanning:  # Only process if scan wasn't stopped
-                self.parse_ping_results(result.stdout)
-                self.append_details(f"\nScan completed at {datetime.now().strftime('%H:%M:%S')}\n")
-                self.status_label.config(text=f"Found {len(self.hosts)} hosts")
+            # Read output in real-time
+            while True:
+                output = process.stdout.readline()
+                if output == '' and process.poll() is not None:
+                    break
+                if output:
+                    self.append_output(output)
+                
+                if not self.scanning:
+                    process.terminate()
+                    break
             
-        except subprocess.CalledProcessError as e:
-            self.append_details(f"Error running nmap:\n{e.stderr}\n")
-            self.status_label.config(text="Scan failed - try with sudo")
+            if self.scanning:  # Only process if scan wasn't stopped
+                return_code = process.poll()
+                if return_code == 0:
+                    self.append_output(f"\nScan completed at {datetime.now().strftime('%H:%M:%S')}\n")
+                    self.status_label.config(text="Scan completed")
+                else:
+                    error = process.stderr.read()
+                    self.append_output(f"\nScan failed:\n{error}\n")
+                    self.status_label.config(text="Scan failed")
+            
         except Exception as e:
-            self.append_details(f"Unexpected error: {str(e)}\n")
+            self.append_output(f"Unexpected error: {str(e)}\n")
             self.status_label.config(text="Scan failed")
         finally:
             if self.scanning:
@@ -213,82 +200,27 @@ class PingScanner:
                 self.scan_button.config(text="Start Scan")
                 self.progress.stop()
     
-    def parse_ping_results(self, xml_output):
-        """Parse nmap ping scan results"""
-        try:
-            host_blocks = re.findall(r'<host .*?>.*?</host>', xml_output, re.DOTALL)
-            self.append_details(f"\nFound {len(host_blocks)} active hosts\n")
-            
-            for host in host_blocks:
-                # Get IP address
-                ip = self.get_xml_field(host, r'<address addr="([^"]+)" addrtype="ipv4"/>')
-                
-                # Get MAC and vendor
-                mac = self.get_xml_field(host, r'<address addr="([^"]+)" addrtype="mac"/>')
-                vendor = self.get_xml_field(host, r'vendor="([^"]+)"')
-                
-                # Get hostname
-                hostname = self.get_xml_field(host, r'<hostname name="([^"]+)"')
-                
-                # Add to results
-                self.hosts.append({
-                    'ip': ip,
-                    'hostname': hostname,
-                    'mac': mac,
-                    'vendor': vendor
-                })
-                
-                # Add to treeview
-                self.results_tree.insert('', tk.END, values=(
-                    ip, hostname, mac, vendor
-                ))
-                
-                # Add to details
-                self.append_details(
-                    f"Host: {ip}\n"
-                    f"Hostname: {hostname}\n"
-                    f"MAC: {mac}\n"
-                    f"Vendor: {vendor}\n\n"
-                )
-                
-                # Update GUI periodically
-                if len(self.hosts) % 5 == 0:
-                    self.root.update()
-        
-        except Exception as e:
-            self.append_details(f"Error parsing results: {str(e)}\n")
-    
-    def get_xml_field(self, text, pattern, default='Unknown'):
-        """Helper to extract field from XML"""
-        match = re.search(pattern, text)
-        return match.group(1) if match else default
-    
     def stop_scan(self):
         """Stop ongoing scan"""
         self.scanning = False
         self.scan_button.config(text="Start Scan")
         self.progress.stop()
         self.status_label.config(text="Scan stopped")
-        
-        if self.scan_thread and self.scan_thread.is_alive():
-            self.append_details("\n[Scan stopped by user]\n")
+        self.append_output("\n[Scan stopped by user]\n")
     
     def clear_results(self):
         """Clear previous scan results"""
-        self.hosts = []
-        for item in self.results_tree.get_children():
-            self.results_tree.delete(item)
-        
-        self.details_text.config(state=tk.NORMAL)
-        self.details_text.delete(1.0, tk.END)
-        self.details_text.config(state=tk.DISABLED)
+        self.results_text.config(state=tk.NORMAL)
+        self.results_text.delete(1.0, tk.END)
+        self.results_text.config(state=tk.DISABLED)
     
-    def append_details(self, text):
-        """Append text to details window"""
-        self.details_text.config(state=tk.NORMAL)
-        self.details_text.insert(tk.END, text)
-        self.details_text.see(tk.END)
-        self.details_text.config(state=tk.DISABLED)
+    def append_output(self, text):
+        """Append text to output window"""
+        self.results_text.config(state=tk.NORMAL)
+        self.results_text.insert(tk.END, text)
+        self.results_text.see(tk.END)
+        self.results_text.config(state=tk.DISABLED)
+        self.root.update()
     
     def on_closing(self):
         """Handle window closing"""
