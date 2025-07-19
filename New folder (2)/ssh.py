@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, scrolledtext
 import subprocess
 import socket
 import threading
@@ -10,7 +10,7 @@ class SSHManager:
     def __init__(self, root):
         self.root = root
         self.root.title("SSH Manager")
-        self.root.geometry("500x400")
+        self.root.geometry("700x600")  # Increased size for status display
         self.root.resizable(False, False)
         
         # SSH status
@@ -42,6 +42,10 @@ class SSHManager:
         
         self.status_label = ttk.Label(status_frame, text="Checking status...", font=('Helvetica', 12))
         self.status_label.pack()
+        
+        # Detailed status button
+        self.details_button = ttk.Button(status_frame, text="Show Detailed Status", command=self.show_detailed_status)
+        self.details_button.pack(pady=5)
         
         # IP Address display
         ip_frame = ttk.LabelFrame(main_frame, text="Server Information", padding="10")
@@ -113,6 +117,28 @@ class SSHManager:
         except:
             self.ssh_running = False
             self.status_label.config(text="Unable to check SSH status", foreground='orange')
+    
+    def get_detailed_ssh_status(self):
+        try:
+            result = subprocess.run(['sudo', 'systemctl', 'status', 'ssh'], capture_output=True, text=True)
+            return result.stdout
+        except subprocess.CalledProcessError as e:
+            return f"Error getting detailed status:\n{e.stdout}\n{e.stderr}"
+    
+    def show_detailed_status(self):
+        status_window = tk.Toplevel(self.root)
+        status_window.title("SSH Service Details")
+        status_window.geometry("600x400")
+        
+        status_text = scrolledtext.ScrolledText(status_window, wrap=tk.WORD)
+        status_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        status = self.get_detailed_ssh_status()
+        status_text.insert(tk.END, status)
+        status_text.config(state=tk.DISABLED)  # Make it read-only
+        
+        close_button = ttk.Button(status_window, text="Close", command=status_window.destroy)
+        close_button.pack(pady=10)
     
     def start_ssh(self):
         try:
