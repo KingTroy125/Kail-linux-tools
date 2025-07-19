@@ -6,17 +6,17 @@ import re
 from datetime import datetime
 import ipaddress
 
-class NmapScanner:
+class PingScanner:
     def __init__(self, root):
         self.root = root
-        self.root.title("Nmap Scanner")
-        self.root.geometry("1000x800")
+        self.root.title("Ping Scanner")
+        self.root.geometry("900x700")
         self.root.resizable(True, True)
         
         # Scan variables
         self.scanning = False
         self.scan_thread = None
-        self.results = []
+        self.hosts = []
         
         # Create GUI elements
         self.create_widgets()
@@ -27,7 +27,7 @@ class NmapScanner:
         main_frame.pack(fill=tk.BOTH, expand=True)
         
         # Title
-        title_label = ttk.Label(main_frame, text="Nmap Scanner", font=('Helvetica', 16, 'bold'))
+        title_label = ttk.Label(main_frame, text="Ping Scanner", font=('Helvetica', 16, 'bold'))
         title_label.pack(pady=10)
         
         # Target input frame
@@ -39,7 +39,7 @@ class NmapScanner:
         self.target_var = tk.StringVar()
         self.target_entry = ttk.Entry(input_frame, textvariable=self.target_var, width=25)
         self.target_entry.pack(side=tk.LEFT, padx=5)
-        self.target_entry.insert(0, "192.168.1.1")
+        self.target_entry.insert(0, "192.168.1.0/24")
         
         # Examples
         ttk.Label(input_frame, 
@@ -52,28 +52,16 @@ class NmapScanner:
         
         self.scan_type = tk.StringVar(value='sn')
         
-        # Scan type buttons
-        types = [
-            ('Ping Scan (-sn)', 'sn'),
-            ('Quick Scan (-T4 -F)', 'quick'),
-            ('Full Scan (-A)', 'full'),
-            ('Port Range (-p 1-1000)', 'ports'),
-            ('OS Detection (-O)', 'os'),
-            ('Service Detection (-sV)', 'service')
-        ]
+        # Radio buttons for scan types
+        ttk.Radiobutton(scan_frame, 
+                        text="Standard Ping Scan (-sP)", 
+                        variable=self.scan_type, 
+                        value='sP').pack(anchor='w', padx=5, pady=2)
         
-        for i, (text, mode) in enumerate(types):
-            btn = ttk.Radiobutton(scan_frame, text=text, variable=self.scan_type, value=mode)
-            btn.grid(row=i//3, column=i%3, sticky='w', padx=5, pady=2)
-        
-        # Custom scan frame
-        custom_frame = ttk.Frame(scan_frame)
-        custom_frame.grid(row=2, column=2, columnspan=1, sticky='ew')
-        ttk.Label(custom_frame, text="Custom:").pack(side=tk.LEFT)
-        self.custom_scan_var = tk.StringVar()
-        self.custom_scan_entry = ttk.Entry(custom_frame, textvariable=self.custom_scan_var, width=15)
-        self.custom_scan_entry.pack(side=tk.LEFT, padx=5)
-        self.custom_scan_entry.insert(0, "-sS -p 22,80,443")
+        ttk.Radiobutton(scan_frame, 
+                        text="No Port Scan (-sn)", 
+                        variable=self.scan_type, 
+                        value='sn').pack(anchor='w', padx=5, pady=2)
         
         # Control frame
         control_frame = ttk.Frame(main_frame, padding="10")
@@ -92,22 +80,20 @@ class NmapScanner:
         self.status_label.pack(side=tk.LEFT, padx=10)
         
         # Results frame
-        results_frame = ttk.LabelFrame(main_frame, text="Scan Results", padding="10")
+        results_frame = ttk.LabelFrame(main_frame, text="Discovered Hosts", padding="10")
         results_frame.pack(fill=tk.BOTH, expand=True, pady=5)
         
         # Treeview for results
         self.results_tree = ttk.Treeview(results_frame, 
-                                       columns=('ip', 'status', 'hostname', 'ports', 'os', 'service'), 
+                                       columns=('ip', 'hostname', 'mac', 'vendor'), 
                                        show='headings')
         
         # Configure columns
         columns = [
-            ('ip', 'IP Address', 120),
-            ('status', 'Status', 80),
-            ('hostname', 'Hostname', 150),
-            ('ports', 'Open Ports', 200),
-            ('os', 'OS Guess', 150),
-            ('service', 'Services', 200)
+            ('ip', 'IP Address', 150),
+            ('hostname', 'Hostname', 200),
+            ('mac', 'MAC Address', 150),
+            ('vendor', 'Vendor', 250)
         ]
         
         for col_id, col_text, width in columns:
@@ -166,28 +152,6 @@ class NmapScanner:
                            " - CIDR Range: 192.168.1.0/24")
         return None
     
-    def get_scan_command(self, target):
-        """Return the appropriate nmap command based on selected scan type"""
-        scan_type = self.scan_type.get()
-        
-        base_cmd = ['sudo', 'nmap', '-oX', '-', '-n', target]
-        
-        if scan_type == 'sn':
-            return base_cmd + ['-sn']
-        elif scan_type == 'quick':
-            return base_cmd + ['-T4', '-F']
-        elif scan_type == 'full':
-            return base_cmd + ['-A', '-v']
-        elif scan_type == 'ports':
-            return base_cmd + ['-p', '1-1000']
-        elif scan_type == 'os':
-            return base_cmd + ['-O']
-        elif scan_type == 'service':
-            return base_cmd + ['-sV']
-        else:  # custom
-            custom = self.custom_scan_var.get().strip()
-            return base_cmd + custom.split()
-    
     def toggle_scan(self):
         """Start or stop scanning"""
         if self.scanning:
@@ -210,19 +174,19 @@ class NmapScanner:
         
         # Start scan in separate thread
         self.scan_thread = threading.Thread(
-            target=self.run_scan,
+            target=self.run_ping_scan,
             args=(target,),
             daemon=True
         )
         self.scan_thread.start()
     
-    def run_scan(self, target):
-        """Run the nmap scan with selected options"""
+    def run_ping_scan(self, target):
+        """Run the ping scan with selected options"""
         try:
-            command = self.get_scan_command(target)
             scan_type = self.scan_type.get()
-            
             self.append_details(f"Starting {scan_type} scan of {target} at {datetime.now().strftime('%H:%M:%S')}\n")
+            
+            command = ['sudo', 'nmap', '-oX', '-', '-n', f'-{scan_type}', target]
             self.append_details("Command: " + ' '.join(command) + "\n")
             
             result = subprocess.run(
@@ -233,9 +197,9 @@ class NmapScanner:
             )
             
             if self.scanning:  # Only process if scan wasn't stopped
-                self.parse_results(result.stdout, scan_type)
+                self.parse_ping_results(result.stdout)
                 self.append_details(f"\nScan completed at {datetime.now().strftime('%H:%M:%S')}\n")
-                self.status_label.config(text=f"Scan completed - {len(self.results)} hosts found")
+                self.status_label.config(text=f"Found {len(self.hosts)} hosts")
             
         except subprocess.CalledProcessError as e:
             self.append_details(f"Error running nmap:\n{e.stderr}\n")
@@ -249,65 +213,46 @@ class NmapScanner:
                 self.scan_button.config(text="Start Scan")
                 self.progress.stop()
     
-    def parse_results(self, xml_output, scan_type):
-        """Parse nmap XML output based on scan type"""
+    def parse_ping_results(self, xml_output):
+        """Parse nmap ping scan results"""
         try:
-            hosts = re.findall(r'<host .*?>.*?</host>', xml_output, re.DOTALL)
-            self.append_details(f"\nFound {len(hosts)} hosts\n")
+            host_blocks = re.findall(r'<host .*?>.*?</host>', xml_output, re.DOTALL)
+            self.append_details(f"\nFound {len(host_blocks)} active hosts\n")
             
-            for host in hosts:
-                # Get common fields
+            for host in host_blocks:
+                # Get IP address
                 ip = self.get_xml_field(host, r'<address addr="([^"]+)" addrtype="ipv4"/>')
-                status = self.get_xml_field(host, r'<status state="([^"]+)"', 'status').capitalize()
                 
-                # Skip if host is down (unless it's a ping scan)
-                if status.lower() != 'up' and scan_type != 'sn':
-                    continue
-                
-                # Get additional fields
-                hostname = self.get_xml_field(host, r'<hostname name="([^"]+)"')
+                # Get MAC and vendor
                 mac = self.get_xml_field(host, r'<address addr="([^"]+)" addrtype="mac"/>')
                 vendor = self.get_xml_field(host, r'vendor="([^"]+)"')
-                os = self.get_xml_field(host, r'<osclass type="([^"]+)"')
                 
-                # Get ports and services
-                ports = []
-                port_matches = re.finditer(
-                    r'<port protocol="[^"]+" portid="([^"]+)">.*?<state state="([^"]+)".*?<service name="([^"]+)"', 
-                    host, re.DOTALL)
-                
-                for match in port_matches:
-                    if match.group(2) == 'open':
-                        ports.append(f"{match.group(1)}/{match.group(3)}")
-                
-                ports_str = ', '.join(ports) if ports else 'None'
+                # Get hostname
+                hostname = self.get_xml_field(host, r'<hostname name="([^"]+)"')
                 
                 # Add to results
-                self.results.append({
+                self.hosts.append({
                     'ip': ip,
-                    'status': status,
                     'hostname': hostname,
-                    'ports': ports_str,
-                    'os': os,
-                    'service': vendor
+                    'mac': mac,
+                    'vendor': vendor
                 })
                 
                 # Add to treeview
                 self.results_tree.insert('', tk.END, values=(
-                    ip, status, hostname, ports_str, os, vendor
+                    ip, hostname, mac, vendor
                 ))
                 
                 # Add to details
                 self.append_details(
-                    f"Host: {ip} ({hostname})\n"
-                    f"Status: {status}\n"
-                    f"MAC: {mac} ({vendor})\n"
-                    f"OS: {os}\n"
-                    f"Open Ports: {ports_str}\n\n"
+                    f"Host: {ip}\n"
+                    f"Hostname: {hostname}\n"
+                    f"MAC: {mac}\n"
+                    f"Vendor: {vendor}\n\n"
                 )
                 
                 # Update GUI periodically
-                if len(self.results) % 5 == 0:
+                if len(self.hosts) % 5 == 0:
                     self.root.update()
         
         except Exception as e:
@@ -330,7 +275,7 @@ class NmapScanner:
     
     def clear_results(self):
         """Clear previous scan results"""
-        self.results = []
+        self.hosts = []
         for item in self.results_tree.get_children():
             self.results_tree.delete(item)
         
@@ -353,6 +298,6 @@ class NmapScanner:
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = NmapScanner(root)
+    app = PingScanner(root)
     root.protocol("WM_DELETE_WINDOW", app.on_closing)
     root.mainloop()
